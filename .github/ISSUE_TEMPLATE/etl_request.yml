@@ -1,0 +1,104 @@
+name: ETL Pipeline Request
+description: Request a new data pipeline. deepsense will profile the source, choose a stack, implement, verify, and open a PR.
+title: "[etl] "
+labels: ["etl:new"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every field below feeds a specific agent. Vague answers produce vague pipelines —
+        the Profiler can measure the data, but it cannot guess your intent.
+
+  - type: input
+    id: source_locator
+    attributes:
+      label: Source location
+      description: Table, path, or endpoint. Fully qualified.
+      placeholder: "public.orders  |  s3://bucket/events/*.parquet  |  https://api.vendor.com/v2/orders"
+    validations: {required: true}
+
+  - type: dropdown
+    id: source_kind
+    attributes:
+      label: Source type
+      options: [postgres, mysql, snowflake, s3, gcs, rest_api, sftp, local_file, kafka, other]
+    validations: {required: true}
+
+  - type: input
+    id: source_secret
+    attributes:
+      label: Read-only credential name
+      description: >
+        The name of an existing read-only secret. NOT the value. If no read-only role
+        exists for this source yet, stop and provision one first — see runbook.
+      placeholder: "PG_ORDERS_RO"
+    validations: {required: true}
+
+  - type: input
+    id: target_locator
+    attributes:
+      label: Target location
+      placeholder: "ANALYTICS.RAW.ORDERS"
+    validations: {required: true}
+
+  - type: dropdown
+    id: load_semantics
+    attributes:
+      label: Load semantics
+      description: >
+        If unsure, pick "let deepsense decide" — the Profiler measures whether the source
+        is append-only or mutable and the Architect will justify the choice in the ADR.
+      options:
+        - let deepsense decide
+        - append only (source never changes existing rows)
+        - upsert (existing rows can change)
+        - full refresh (replace target each run)
+    validations: {required: true}
+
+  - type: input
+    id: cadence
+    attributes:
+      label: Run cadence
+      description: Cron expression or plain English. Declared only — deepsense never schedules or runs it.
+      placeholder: "every 4 hours"
+    validations: {required: true}
+
+  - type: textarea
+    id: success_criteria
+    attributes:
+      label: Success criteria
+      description: >
+        How would you know this pipeline is correct? These become contract tests.
+        Be concrete: row counts, uniqueness, value ranges, freshness.
+      placeholder: |
+        - one row per order_id, no duplicates
+        - status is always one of: pending, paid, shipped, delivered, cancelled, refunded
+        - data no more than 6 hours stale
+        - row count within 0.1% of source
+    validations: {required: true}
+
+  - type: textarea
+    id: known_quirks
+    attributes:
+      label: Known data quirks
+      description: Anything you already know is weird. The Profiler will find more, but this saves it a cycle.
+      placeholder: "status has some legacy mixed-case values; deleted_at means soft delete"
+    validations: {required: false}
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Explicitly out of scope
+      description: Things you do NOT want this pipeline to do. Prevents scope creep under autonomous operation.
+      placeholder: "do not backfill before 2024-01-01; do not join to customers"
+    validations: {required: false}
+
+  - type: checkboxes
+    id: preconditions
+    attributes:
+      label: Preconditions
+      options:
+        - label: A read-only credential for this source exists and is registered in the secret store
+          required: true
+        - label: The target location is safe to create/modify (not a production table with existing consumers)
+          required: true
