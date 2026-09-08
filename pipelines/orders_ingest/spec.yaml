@@ -18,16 +18,12 @@ target:
   locator: ANALYTICS.RAW.ORDERS
   write_mode: upsert
   unique_key: [order_id]
-  # timestamp, not timestamp_tz (unlike docs/contracts.md's example): deepsense's own
-  # gates/dynamic/checks.py runs in the deepsense/ venv, which has no pytz - fetching a
-  # TIMESTAMPTZ column back into Python (snapshot(), row_count()) raises
-  # duckdb.InvalidInputException there. Confirmed directly; not a hypothetical.
   schema:
     - {name: order_id,     type: bigint,      nullable: false}
     - {name: customer_id,  type: bigint,      nullable: false}
     - {name: status,       type: varchar,     nullable: true}
     - {name: amount_usd,   type: decimal(10,2), nullable: true}
-    - {name: _ingested_at, type: timestamp,    nullable: false}
+    - {name: _ingested_at, type: timestamp_tz, nullable: false}
 
 transform:
   column_rules:
@@ -35,7 +31,7 @@ transform:
     - {target: customer_id,  source: customer_id,            cast: bigint,        on_error: reject_row}
     - {target: status,       source: "lower(trim(status))",  cast: varchar,       on_error: 'null'}
     - {target: amount_usd,   source: "strip '$' then cast",  cast: decimal(10,2), on_error: reject_row}
-    - {target: _ingested_at, source: current_timestamp,      cast: timestamp,     on_error: fail}
+    - {target: _ingested_at, source: current_timestamp,      cast: timestamp_tz,  on_error: fail}
 
   null_handling:
     sentinel_values: ['N/A', '-999']

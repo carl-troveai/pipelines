@@ -23,9 +23,12 @@ the actual gates (gates/dynamic/checks.py) rather than reasoning about them:
    real inconsistency in gates/dynamic/checks.py::resilience, not a design choice made
    here - see docs/PLAN.md's open questions.)
 
-3. **`_ingested_at` is `timestamp`, not `timestamp_tz`.** gates/dynamic/checks.py runs in
-   the deepsense/ venv, which has no `pytz` - fetching a `TIMESTAMPTZ` column back into
-   Python (`snapshot()`, `row_count()`) raises there. Confirmed directly, not assumed.
+3. **`_ingested_at` is `timestamp_tz`, which needs `pytz` in the *gates'* environment, not
+   just this pipeline's.** gates/dynamic/checks.py runs in the deepsense/ venv;
+   `snapshot()`/`row_count()` fetching a `TIMESTAMPTZ` column back into Python raised
+   `duckdb.InvalidInputException` there until `pytz` was added to that repo's `gates`
+   dependency group. Confirmed directly (crash, then a passing fetch after the fix), not
+   assumed - see docs/PLAN.md's open questions for the before/after.
 
 Everything else follows the AGENTS.md conventions: Decimal for money (never float),
 rejects go to `failure.dlq_locator` and nowhere else, destinations come only from the
@@ -54,7 +57,7 @@ CREATE TABLE IF NOT EXISTS ORDERS (
     customer_id BIGINT NOT NULL,
     status VARCHAR,
     amount_usd DECIMAL(10,2),
-    _ingested_at TIMESTAMP NOT NULL
+    _ingested_at TIMESTAMPTZ NOT NULL
 )
 """
 
@@ -62,7 +65,7 @@ REJECTS_DDL = """
 CREATE TABLE IF NOT EXISTS ORDERS_REJECTS (
     order_id BIGINT,
     reason VARCHAR,
-    rejected_at TIMESTAMP NOT NULL
+    rejected_at TIMESTAMPTZ NOT NULL
 )
 """
 
@@ -212,7 +215,10 @@ def run(*, source_uri: str, target_uri: str, cursor: str | None = None) -> RunRe
         con.execute(
             "DELETE FROM ORDERS_REJECTS WHERE order_id IN (SELECT order_id FROM rejected)"
         )
-        con.execute("INSERT INTO ORDERS_REJECTS SELECT * FROM rejected")
+        # `rejected` is a local TEMP TABLE this run already built and filtered above,
+        # not a live source with a cursor_column to bound it by.
+        con.execute(
+            "INSERT INTO ORDERS_REJECTS SELECT * FROM rejected")  # deepsense: allow UNBOUNDED_READ
     finally:
         con.close()
 
