@@ -1,0 +1,90 @@
+apiVersion: deepsense/v1
+kind: PipelineSpec
+
+metadata:
+  name: orders_ingest
+  issue: 0
+  spec_version: 1
+
+source:
+  kind: file
+  format: parquet
+  locator: orders
+  read:
+    mode: full
+
+target:
+  kind: duckdb
+  locator: ANALYTICS.RAW.ORDERS
+  write_mode: upsert
+  unique_key: [order_id]
+  # timestamp, not timestamp_tz (unlike docs/contracts.md's example): deepsense's own
+  # gates/dynamic/checks.py runs in the deepsense/ venv, which has no pytz - fetching a
+  # TIMESTAMPTZ column back into Python (snapshot(), row_count()) raises
+  # duckdb.InvalidInputException there. Confirmed directly; not a hypothetical.
+  schema:
+    - {name: order_id,     type: bigint,      nullable: false}
+    - {name: customer_id,  type: bigint,      nullable: false}
+    - {name: status,       type: varchar,     nullable: true}
+    - {name: amount_usd,   type: decimal(10,2), nullable: true}
+    - {name: _ingested_at, type: timestamp,    nullable: false}
+
+transform:
+  column_rules:
+    - {target: order_id,     source: order_id,               cast: bigint,        on_error: fail}
+    - {target: customer_id,  source: customer_id,            cast: bigint,        on_error: reject_row}
+    - {target: status,       source: "lower(trim(status))",  cast: varchar,       on_error: 'null'}
+    - {target: amount_usd,   source: "strip '$' then cast",  cast: decimal(10,2), on_error: reject_row}
+    - {target: _ingested_at, source: current_timestamp,      cast: timestamp,     on_error: fail}
+
+  null_handling:
+    sentinel_values: ['N/A', '-999']
+    treat_as_null: true
+
+  deduplication:
+    key: [order_id]
+    keep: last
+    by: updated_at
+
+contracts:
+  row_count:
+    min: 1
+  uniqueness:
+    - [order_id]
+  not_null:
+    - order_id
+    - customer_id
+    - _ingested_at
+  accepted_values:
+    status: [pending, paid, shipped, delivered, cancelled, refunded]
+  ranges:
+    amount_usd: {min: 0.00, max: 100000.00}
+  rejects:
+    max_pct: 20.0
+
+semantics:
+  idempotency_key: [order_id]
+  # Scoped to business columns. _ingested_at is a per-run audit timestamp, preserved
+  # (not overwritten) for a key that already exists in the target - see deepsense_entry.py.
+  # A rerun against unchanged source data must therefore leave the target byte-identical,
+  # which is exactly what deepsense/gates/dynamic/checks.py::idempotency hashes for.
+  idempotency_guarantee: rerun_produces_identical_target
+  schema_drift_policy: fail
+
+failure:
+  on_row_error: reject_to_dlq
+  dlq_locator: ORDERS_REJECTS
+  # malformed.parquet's real reject rate must stay at or under this, or the
+  # resilience gate fails either way it could otherwise be satisfied - see
+  # deepsense_entry.py's module docstring.
+  reject_threshold_pct: 20.0
+
+observability:
+  emit_metrics: [rows_read, rows_written, rows_rejected, duration_s]
+  log_level: info
+
+runtime:
+  stack: duckdb
+  entrypoint: deepsense_entry.py
+
+risk_resolutions: []
