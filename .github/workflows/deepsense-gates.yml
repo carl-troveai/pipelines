@@ -1,0 +1,137 @@
+name: deepsense gates
+
+# Lives here, not in deepsense/, because a `pull_request: paths:` trigger only fires for
+# a PR in the repo the workflow file itself lives in - this repo (Repo B) is where PRs
+# touching pipelines/** actually happen. gates/, runner/ and this repo's uv lockfile all
+# live in deepsense/ (Repo A) instead, per docs/architecture.md's two-repo split, so this
+# workflow checks that repo out too rather than assuming a monorepo checkout.
+
+on:
+  pull_request:
+    paths: ["pipelines/**"]
+
+# No secrets with write access to anything are available to this workflow.
+# The verification environment is deliberately incapable of reaching a real sink.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: [self-hosted, deepsense-isolated]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout this repo (pipelines)
+        uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+
+      - name: Identify pipeline under change
+        id: pipe
+        run: |
+          names=$(git diff --name-only origin/${{ github.base_ref }}...HEAD \
+                  | grep '^pipelines/' | cut -d/ -f2 | sort -u)
+          count=$(echo "$names" | grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::PR must touch exactly one pipeline (found: $count)"
+            exit 1
+          fi
+          echo "name=$names" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout deepsense (gate code)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DEEPSENSE_HARNESS_REPO }}
+          ref: main
+          token: ${{ secrets.DEEPSENSE_HARNESS_RO_TOKEN }}
+          path: deepsense-harness
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: deepsense-harness/uv.lock
+
+      - name: Sync gate environment
+        # --frozen: fail rather than silently re-resolving. The gates must run with
+        # exactly the dependency set that was reviewed, not whatever resolves today.
+        working-directory: deepsense-harness
+        run: uv sync --frozen --group gates --group lint
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Install pipeline dependencies
+        working-directory: pipelines/${{ steps.pipe.outputs.name }}
+        run: |
+          if [ -f pyproject.toml ]; then
+            uv sync --frozen
+          elif [ -f requirements.txt ]; then
+            uv pip install -r requirements.txt
+          fi
+
+      - name: Run gates
+        working-directory: deepsense-harness
+        run: |
+          uv run python -m gates.runner \
+            --pipeline "${{ steps.pipe.outputs.name }}" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --base "origin/${{ github.base_ref }}" \
+            --report "$GITHUB_WORKSPACE/gate_report.json"
+
+      - name: Publish report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report
+          path: gate_report.json
+
+      - name: Comment findings on PR
+        if: failure()
+        working-directory: deepsense-harness
+        run: |
+          uv run python -m gates.format_comment "$GITHUB_WORKSPACE/gate_report.json" > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  merge:
+    needs: gates
+    if: success()
+    runs-on: [self-hosted, deepsense-isolated]
+    steps:
+      - name: Checkout this repo (pipelines)
+        uses: actions/checkout@v4
+
+      - name: Checkout deepsense (merge bot)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.DEEPSENSE_HARNESS_REPO }}
+          ref: main
+          token: ${{ secrets.DEEPSENSE_HARNESS_RO_TOKEN }}
+          path: deepsense-harness
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: deepsense-harness/uv.lock
+
+      - uses: actions/download-artifact@v4
+        with: {name: gate-report}
+
+      - name: Autonomous merge
+        working-directory: deepsense-harness
+        run: |
+          uv run --frozen python runner/merge_bot.py \
+            --pr "${{ github.event.pull_request.number }}" \
+            --issue "$(gh pr view ${{ github.event.pull_request.number }} \
+                       --json body -q '.body' | grep -oP 'Closes #\K\d+')" \
+            --repo "${{ github.repository }}" \
+            --report "$GITHUB_WORKSPACE/gate_report.json"
+        env:
+          GH_TOKEN: ${{ secrets.DEEPSENSE_MERGE_TOKEN }}
