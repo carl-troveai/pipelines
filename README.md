@@ -1,7 +1,7 @@
 # pipelines
 
 **This is Repo B: generated code.** deepsense's agents write here; they cannot write to
-[`deepsense/`](../deepsense) (Repo A, the harness — prompts, gates, the merge bot). The
+[`deepsense/`](https://github.com/carl-troveai/deepsense) (Repo A, the harness — prompts, gates, the merge bot). The
 agent's GitHub token is scoped to this repo only. See `deepsense/docs/architecture.md` §2
 for why the split exists.
 
