@@ -62,9 +62,22 @@ jobs:
         run: uv sync --frozen --group gates --group lint
 
       - name: Install gitleaks
+        # Not the install.sh one-liner this used to be: that URL 404s (confirmed
+        # directly - deepsense/runner/sandbox.Dockerfile hit the identical bug first),
+        # and piped into `sh` the failure is silent - the step "succeeds" having
+        # installed nothing, so `gates/static/lint.py::secrets()` only ever caught it
+        # downstream via SCANNER_MISSING instead of failing here where the cause is
+        # obvious. Pinned release tarball instead, matching the Dockerfile's fix.
         run: |
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh \
-            | sh -s -- -b /usr/local/bin
+          set -e
+          case "$(uname -m)" in
+            x86_64) gl_arch=x64 ;;
+            aarch64|arm64) gl_arch=arm64 ;;
+            *) echo "::error::unsupported architecture for gitleaks: $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${gl_arch}.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
 
       - name: Install pipeline dependencies
         working-directory: pipelines/${{ steps.pipe.outputs.name }}
