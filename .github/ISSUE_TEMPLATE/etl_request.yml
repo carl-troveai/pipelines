@@ -13,8 +13,10 @@ body:
     id: source_locator
     attributes:
       label: Source location
-      description: Table, path, or endpoint. Fully qualified.
-      placeholder: "public.orders  |  s3://bucket/events/*.parquet  |  https://api.vendor.com/v2/orders"
+      description: >
+        Table, path, or endpoint. Fully qualified. For "local_file": commit the file to
+        sources/ in this repo first, then give its repo-relative path here.
+      placeholder: "public.orders  |  s3://bucket/events/*.parquet  |  sources/customers_export.csv"
     validations: {required: true}
 
   - type: dropdown
@@ -30,9 +32,11 @@ body:
       label: Read-only credential name
       description: >
         The name of an existing read-only secret. NOT the value. If no read-only role
-        exists for this source yet, stop and provision one first — see runbook.
-      placeholder: "PG_ORDERS_RO"
-    validations: {required: true}
+        exists for this source yet, stop and provision one first — see runbook. Not
+        required for "local_file" (nothing to authenticate to) - put N/A. deepsense
+        will flag this as missing and stop if it's actually needed and left blank.
+      placeholder: "PG_ORDERS_RO  |  N/A for local_file"
+    validations: {required: false}
 
   - type: input
     id: target_locator
@@ -98,7 +102,9 @@ body:
     attributes:
       label: Preconditions
       options:
-        - label: A read-only credential for this source exists and is registered in the secret store
+        - label: >-
+            The source is accessible read-only - a registered credential for a live
+            source, or (for local_file) the file is committed to sources/ in this repo
           required: true
         - label: The target location is safe to create/modify (not a production table with existing consumers)
           required: true

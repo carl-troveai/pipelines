@@ -32,6 +32,14 @@ touched pipeline by splitting a changed path on `/` and taking the second segmen
 (`pipelines/<name>/...`) — a nested or oddly-cased name breaks that resolution, not just
 the style guide.
 
+**`sources/` (repo root, sibling to `pipelines/`)** holds committed files for
+`local_file`-type ETL requests (`.github/ISSUE_TEMPLATE/etl_request.yml`). A local file
+has nowhere else stable to live: `pipelines/<name>/` doesn't exist until the Architect
+names it, but the Profiler needs a real path to query before that ever happens. The
+issue's Source location field points at it by repo-relative path
+(`sources/customers_export.csv`); no credential, no upload mechanism, just a file
+checked into version control like anything else here.
+
 ## The one contract every stack must expose
 
 ```python

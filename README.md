@@ -16,6 +16,7 @@ pipelines/<name>/
     <implementation>    polars module, dbt project, pyspark job, whatever the ADR chose
     tests/              one test per spec.yaml contracts: entry
     fixtures/           synthetic clean + malformed data, never sampled from live rows
+sources/                committed files for local_file-type ETL requests - see AGENTS.md
 .github/ISSUE_TEMPLATE/etl_request.yml
 AGENTS.md               house conventions every pipeline in this repo follows
 ```
